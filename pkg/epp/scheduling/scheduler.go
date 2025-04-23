@@ -36,6 +36,10 @@ type Config struct {
 	QueueThresholdCritical int
 	QueueingThresholdLoRA  int
 	LoraAffinityThreshold  float64
+	PrefixStoreMaxEntries  int
+	PrefixStoreMinLen      int
+	PrefixStoreMaxLen      int
+	PrefixStoreTTLHours    int
 }
 
 const (
@@ -44,6 +48,10 @@ const (
 	defaultQueueThresholdCritical = 5
 	defaultQueueingThresholdLoRA  = 128
 	defaultLoraAffinityThreshold  = 0.999
+	defaultPrefixStoreMaxEntries  = 1000
+	defaultPrefixStoreMinLen      = 3
+	defaultPrefixStoreMaxLen      = 100
+	defaultPrefixStoreTTLHours    = 24
 )
 
 // LoadConfig loads configuration from environment variables
@@ -56,6 +64,10 @@ func LoadConfig() Config {
 		QueueThresholdCritical: envutil.GetEnvInt("QUEUE_THRESHOLD_CRITICAL", defaultQueueThresholdCritical, baseLogger),
 		QueueingThresholdLoRA:  envutil.GetEnvInt("QUEUING_THRESHOLD_LORA", defaultQueueingThresholdLoRA, baseLogger),
 		LoraAffinityThreshold:  envutil.GetEnvFloat("LORA_AFFINITY_THRESHOLD", defaultLoraAffinityThreshold, baseLogger),
+		PrefixStoreMaxEntries:  envutil.GetEnvInt("PREFIX_STORE_MAX_ENTRIES", defaultPrefixStoreMaxEntries, baseLogger),
+		PrefixStoreMinLen:      envutil.GetEnvInt("PREFIX_STORE_MIN_LEN", defaultPrefixStoreMinLen, baseLogger),
+		PrefixStoreMaxLen:      envutil.GetEnvInt("PREFIX_STORE_MAX_LEN", defaultPrefixStoreMaxLen, baseLogger),
+		PrefixStoreTTLHours:    envutil.GetEnvInt("PREFIX_STORE_TTL_HOURS", defaultPrefixStoreTTLHours, baseLogger),
 	}
 
 	baseLogger.V(logutil.DEFAULT).Info("Scheduler configuration loaded", "config", config)
@@ -127,12 +139,12 @@ func NewScheduler(datastore Datastore) *Scheduler {
 	sMng := NewScorerMng()
 	sMng.addScorer(NewSessionAffinityScorer(1, datastore))
 
-	// Initialize prefix store with configuration
+	// Initialize prefix store with configuration from environment variables
 	prefixStore := NewPrefixStore(PrefixStoreConfig{
-		MaxEntries:   1000,
-		MinPrefixLen: 3,
-		MaxPrefixLen: 100,
-		EntryTTL:     24 * time.Hour,
+		MaxEntries:   config.PrefixStoreMaxEntries,
+		MinPrefixLen: config.PrefixStoreMinLen,
+		MaxPrefixLen: config.PrefixStoreMaxLen,
+		EntryTTL:     time.Duration(config.PrefixStoreTTLHours) * time.Hour,
 	})
 
 	// Add prefix aware scorer with a weight of 1
