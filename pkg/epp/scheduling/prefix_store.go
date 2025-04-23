@@ -8,6 +8,7 @@ import (
 	"github.com/armon/go-radix"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	errutil "sigs.k8s.io/gateway-api-inference-extension/pkg/epp/util/error"
 )
 
 // PrefixEntry represents a single entry in the prefix store
@@ -49,7 +50,10 @@ func (ps *PrefixStore) AddPrefix(ctx context.Context, prefix string, pod types.N
 
 	// Validate prefix length
 	if len(prefix) < ps.config.MinPrefixLen {
-		return ErrPrefixTooShort
+		return &errutil.Error{
+			Code: errutil.BadRequest,
+			Msg:  "prefix length is below minimum allowed length",
+		}
 	}
 	if len(prefix) > ps.config.MaxPrefixLen {
 		prefix = prefix[:ps.config.MaxPrefixLen]
