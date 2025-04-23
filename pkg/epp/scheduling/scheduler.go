@@ -20,6 +20,7 @@ package scheduling
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	backendmetrics "sigs.k8s.io/gateway-api-inference-extension/pkg/epp/backend/metrics"
@@ -114,23 +115,36 @@ var (
 	}
 )
 
+type Scheduler struct {
+	datastore              Datastore
+	criticalRequestFilter  Filter
+	sheddableRequestFilter Filter
+	scorerMng              *ScorerMng
+	prefixStore            *PrefixStore
+}
+
 func NewScheduler(datastore Datastore) *Scheduler {
 	sMng := NewScorerMng()
 	sMng.addScorer(NewSessionAffinityScorer(1, datastore))
+
+	// Initialize prefix store with configuration
+	prefixStore := NewPrefixStore(PrefixStoreConfig{
+		MaxEntries:   1000,
+		MinPrefixLen: 3,
+		MaxPrefixLen: 100,
+		EntryTTL:     24 * time.Hour,
+	})
+
+	// Add prefix aware scorer with a weight of 1
+	sMng.addScorer(NewPrefixAwareScorer(1, prefixStore))
 
 	return &Scheduler{
 		datastore:              datastore,
 		criticalRequestFilter:  lowLatencyFilter,
 		sheddableRequestFilter: sheddableRequestFilter,
 		scorerMng:              sMng,
+		prefixStore:            prefixStore,
 	}
-}
-
-type Scheduler struct {
-	datastore              Datastore
-	criticalRequestFilter  Filter
-	sheddableRequestFilter Filter
-	scorerMng              *ScorerMng
 }
 
 type Datastore interface {
