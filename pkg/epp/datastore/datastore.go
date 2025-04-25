@@ -32,6 +32,8 @@ import (
 	backendmetrics "sigs.k8s.io/gateway-api-inference-extension/pkg/epp/backend/metrics"
 	logutil "sigs.k8s.io/gateway-api-inference-extension/pkg/epp/util/logging"
 	podutil "sigs.k8s.io/gateway-api-inference-extension/pkg/epp/util/pod"
+	"sigs.k8s.io/gateway-api-inference-extension/pkg/epp/scheduling"
+	"sigs.k8s.io/gateway-api-inference-extension/pkg/epp/util/logging"
 )
 
 const (
@@ -75,7 +77,7 @@ type Datastore interface {
 	Clear()
 }
 
-func NewDatastore(parentCtx context.Context, pmf *backendmetrics.PodMetricsFactory) Datastore {
+func NewDatastore(parentCtx context.Context, pmf *backendmetrics.PodMetricsFactory, prefixStore *scheduling.PrefixStore) Datastore {
 	store := &datastore{
 		parentCtx:       parentCtx,
 		poolAndModelsMu: sync.RWMutex{},
@@ -83,6 +85,7 @@ func NewDatastore(parentCtx context.Context, pmf *backendmetrics.PodMetricsFacto
 		pods:            &sync.Map{},
 		sessions:        &sync.Map{},
 		pmf:             pmf,
+		prefixStore:     prefixStore,
 	}
 
 	go store.cleanupSessions(sessionKeepAliveCheckFrequency, sessionKeepAliveTime, parentCtx)
@@ -103,6 +106,8 @@ type datastore struct {
 	// key: session id, value: *backendmetrics.Pod
 	sessions *sync.Map
 	pmf      *backendmetrics.PodMetricsFactory
+	// prefixStore is used to store and lookup model prefixes
+	prefixStore *scheduling.PrefixStore
 }
 
 func (ds *datastore) Clear() {
@@ -256,6 +261,19 @@ func (ds *datastore) PodUpdateOrAddIfNotExist(pod *corev1.Pod, pool *v1alpha2.In
 	}
 	// Update pod properties if anything changed.
 	pm.UpdatePod(pod)
+
+	// Update prefix store with pod's active models
+	if ds.prefixStore != nil {
+		metrics := pm.GetMetrics()
+		for model := range metrics.ActiveModels {
+			// Add a prefix for each active model
+			// The prefix is the model name itself
+			ds.prefixStore.AddPrefix(ds.parentCtx, model, namespacedName, model)
+		}
+	} else {
+		log.FromContext(ds.parentCtx).V(logging.DEBUG).Info("Prefix store is nil, skipping prefix updates", "pod", namespacedName)
+	}
+
 	return ok
 }
 
@@ -301,6 +319,7 @@ func (ds *datastore) PodDelete(namespacedName types.NamespacedName) {
 		pmr := v.(backendmetrics.PodMetrics)
 		pmr.StopRefreshLoop()
 	}
+	log.FromContext(ds.parentCtx).V(logging.DEBUG).Info("Pod removed or not added", "name", namespacedName)
 }
 
 type sessionInfo struct {

@@ -137,7 +137,7 @@ type Scheduler struct {
 
 func NewScheduler(datastore Datastore) *Scheduler {
 	sMng := NewScorerMng()
-	sMng.addScorer(NewSessionAffinityScorer(1, datastore))
+	sMng.addScorer(NewSessionAffinityScorer(0, datastore))
 
 	// Initialize prefix store with configuration from environment variables
 	prefixStore := NewPrefixStore(PrefixStoreConfig{
@@ -192,4 +192,9 @@ func (s *Scheduler) Schedule(ctx context.Context, req *types.LLMRequest) (target
 	}
 
 	return selectedPod, nil
+}
+
+// GetPrefixStore returns the prefix store for this scheduler
+func (s *Scheduler) GetPrefixStore() *PrefixStore {
+	return s.prefixStore
 }

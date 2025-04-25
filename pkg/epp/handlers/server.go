@@ -40,6 +40,7 @@ import (
 	schedulingtypes "sigs.k8s.io/gateway-api-inference-extension/pkg/epp/scheduling/types"
 	errutil "sigs.k8s.io/gateway-api-inference-extension/pkg/epp/util/error"
 	logutil "sigs.k8s.io/gateway-api-inference-extension/pkg/epp/util/logging"
+	"sigs.k8s.io/gateway-api-inference-extension/pkg/epp/scheduling"
 )
 
 func NewStreamingServer(scheduler Scheduler, destinationEndpointHintMetadataNamespace, destinationEndpointHintKey string, datastore datastore.Datastore) *StreamingServer {
@@ -66,6 +67,7 @@ type StreamingServer struct {
 
 type Scheduler interface {
 	Schedule(ctx context.Context, b *schedulingtypes.LLMRequest) (targetPod schedulingtypes.Pod, err error)
+	GetPrefixStore() *scheduling.PrefixStore
 }
 
 // RequestContext stores context information during the life time of an HTTP request.
@@ -75,6 +77,7 @@ type RequestContext struct {
 	Model                     string
 	SessionID                 string
 	ResolvedTargetModel       string
+	Prompt                    string
 	RequestReceivedTimestamp  time.Time
 	ResponseCompleteTimestamp time.Time
 	RequestSize               int

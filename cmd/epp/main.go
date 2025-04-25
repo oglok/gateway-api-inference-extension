@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/go-logr/logr"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -42,6 +43,7 @@ import (
 	"sigs.k8s.io/gateway-api-inference-extension/pkg/epp/metrics"
 	runserver "sigs.k8s.io/gateway-api-inference-extension/pkg/epp/server"
 	"sigs.k8s.io/gateway-api-inference-extension/pkg/epp/util/logging"
+	"sigs.k8s.io/gateway-api-inference-extension/pkg/epp/scheduling"
 )
 
 const (
@@ -162,7 +164,12 @@ func run() error {
 
 	pmf := backendmetrics.NewPodMetricsFactory(&backendmetrics.PodMetricsClientImpl{MetricMapping: mapping}, *refreshMetricsInterval)
 	// Setup runner.
-	datastore := datastore.NewDatastore(ctx, pmf)
+	datastore := datastore.NewDatastore(ctx, pmf, scheduling.NewPrefixStore(scheduling.PrefixStoreConfig{
+		MaxEntries:    1000,
+		MinPrefixLen:  1,
+		MaxPrefixLen:  100,
+		EntryTTL:      5 * time.Minute,
+	}))
 
 	serverRunner := &runserver.ExtProcServerRunner{
 		GrpcPort:                                 *grpcPort,

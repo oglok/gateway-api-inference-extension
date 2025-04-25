@@ -25,6 +25,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/gateway-api-inference-extension/pkg/epp/metrics"
 	logutil "sigs.k8s.io/gateway-api-inference-extension/pkg/epp/util/logging"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 const (
@@ -61,6 +62,32 @@ func (s *StreamingServer) HandleResponseBody(
 	// TODO(https://github.com/kubernetes-sigs/gateway-api-inference-extension/issues/178)
 	// will add the processing for streaming case.
 	reqCtx.ResponseComplete = true
+
+	// Add the prompt to the prefix store if we have a target pod and model
+	if reqCtx.TargetPod != "" && reqCtx.ResolvedTargetModel != "" {
+		// Get the prompt from the request context
+		prompt := reqCtx.Prompt
+		if prompt != "" {
+			// Convert TargetPod string to NamespacedName
+			parts := strings.Split(reqCtx.TargetPod, "/")
+			if len(parts) != 2 {
+				logger.Error(nil, "Invalid TargetPod format", "targetPod", reqCtx.TargetPod)
+				return reqCtx, nil
+			}
+			podName := types.NamespacedName{
+				Namespace: parts[0],
+				Name:      parts[1],
+			}
+
+			// Add the prefix to the store
+			err := s.scheduler.GetPrefixStore().AddPrefix(ctx, prompt, podName, reqCtx.ResolvedTargetModel)
+			if err != nil {
+				logger.Error(err, "Failed to add prefix to store", "prefix", prompt, "pod", reqCtx.TargetPod, "model", reqCtx.ResolvedTargetModel)
+			} else {
+				logger.Info("Added prefix to store", "prefix", prompt, "pod", reqCtx.TargetPod, "model", reqCtx.ResolvedTargetModel)
+			}
+		}
+	}
 
 	reqCtx.respBodyResp = &extProcPb.ProcessingResponse{
 		// The Endpoint Picker supports two approaches to communicating the target endpoint, as a request header

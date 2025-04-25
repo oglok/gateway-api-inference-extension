@@ -9,6 +9,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	errutil "sigs.k8s.io/gateway-api-inference-extension/pkg/epp/util/error"
+	"sigs.k8s.io/gateway-api-inference-extension/pkg/epp/util/logging"
 )
 
 // PrefixEntry represents a single entry in the prefix store
@@ -35,6 +36,8 @@ type PrefixStore struct {
 
 // NewPrefixStore creates a new PrefixStore with the given configuration
 func NewPrefixStore(config PrefixStoreConfig) *PrefixStore {
+	logger := log.FromContext(context.Background())
+	logger.V(logging.DEBUG).Info("Creating new PrefixStore", "config", config)
 	return &PrefixStore{
 		tree:   radix.New(),
 		config: config,
@@ -56,6 +59,7 @@ func (ps *PrefixStore) AddPrefix(ctx context.Context, prefix string, pod types.N
 		}
 	}
 	if len(prefix) > ps.config.MaxPrefixLen {
+		logger.V(logging.DEBUG).Info("Truncating prefix", "originalLength", len(prefix), "maxLength", ps.config.MaxPrefixLen)
 		prefix = prefix[:ps.config.MaxPrefixLen]
 	}
 
@@ -63,6 +67,7 @@ func (ps *PrefixStore) AddPrefix(ctx context.Context, prefix string, pod types.N
 	if val, exists := ps.tree.Get(prefix); exists {
 		entry := val.(*PrefixEntry)
 		if entry.PodRef == pod && entry.ModelName == modelName {
+			logger.V(logging.DEBUG).Info("Updating existing entry", "prefix", prefix, "pod", pod.String())
 			entry.LastUsed = time.Now()
 			ps.tree.Insert(prefix, entry)
 			return nil
@@ -71,6 +76,7 @@ func (ps *PrefixStore) AddPrefix(ctx context.Context, prefix string, pod types.N
 
 	// Check total entries limit
 	if ps.tree.Len() >= ps.config.MaxEntries {
+		logger.V(logging.DEBUG).Info("Store at capacity, evicting oldest entry", "currentSize", ps.tree.Len(), "maxSize", ps.config.MaxEntries)
 		ps.evictOldest()
 	}
 
@@ -82,7 +88,7 @@ func (ps *PrefixStore) AddPrefix(ctx context.Context, prefix string, pod types.N
 	}
 	ps.tree.Insert(prefix, entry)
 
-	logger.Info("Added prefix entry", "prefix", prefix, "pod", pod.String(), "model", modelName)
+	logger.V(logging.DEBUG).Info("Successfully added new prefix entry", "prefix", prefix, "pod", pod.String(), "model", modelName, "totalEntries", ps.tree.Len())
 	return nil
 }
 
@@ -94,24 +100,29 @@ func (ps *PrefixStore) FindPodForPrefix(ctx context.Context, prefix string, mode
 	logger := log.FromContext(ctx)
 
 	if len(prefix) < ps.config.MinPrefixLen {
+		logger.V(logging.DEBUG).Info("Prefix too short", "prefix", prefix, "minLength", ps.config.MinPrefixLen)
 		return types.NamespacedName{}, false
 	}
 
 	if len(prefix) > ps.config.MaxPrefixLen {
+		logger.V(logging.DEBUG).Info("Truncating prefix", "originalLength", len(prefix), "maxLength", ps.config.MaxPrefixLen)
 		prefix = prefix[:ps.config.MaxPrefixLen]
 	}
 
 	// Use LongestPrefix to find the best match
 	matchedPrefix, val, found := ps.tree.LongestPrefix(prefix)
 	if !found {
+		logger.V(logging.DEBUG).Info("No matching prefix found", "prefix", prefix)
 		return types.NamespacedName{}, false
 	}
 
 	entry := val.(*PrefixEntry)
 
 	// Check if entry has expired or model doesn't match
-	if time.Since(entry.LastUsed) > ps.config.EntryTTL || entry.ModelName != modelName {
-		// Don't remove here to avoid write lock
+	if time.Since(entry.LastUsed) > ps.config.EntryTTL {
+		return types.NamespacedName{}, false
+	}
+	if entry.ModelName != modelName {
 		return types.NamespacedName{}, false
 	}
 
@@ -119,7 +130,6 @@ func (ps *PrefixStore) FindPodForPrefix(ctx context.Context, prefix string, mode
 	entry.LastUsed = time.Now()
 	ps.tree.Insert(matchedPrefix, entry)
 
-	logger.Info("Found pod for prefix", "prefix", prefix, "matchedPrefix", matchedPrefix, "pod", entry.PodRef.String(), "model", modelName)
 	return entry.PodRef, true
 }
 
@@ -169,7 +179,9 @@ func (ps *PrefixStore) cleanupExpired(ctx context.Context) {
 	}
 
 	if len(keysToDelete) > 0 {
-		logger.Info("Cleaned up expired entries", "count", len(keysToDelete))
+		logger.V(logging.DEBUG).Info("Cleaned up expired entries", "count", len(keysToDelete), "remainingEntries", ps.tree.Len())
+	} else {
+		logger.V(logging.DEBUG).Info("No expired entries found", "totalEntries", ps.tree.Len())
 	}
 }
 
@@ -179,14 +191,14 @@ func (ps *PrefixStore) RunMaintenance(ctx context.Context) {
 	ticker := time.NewTicker(ps.config.EntryTTL / 2)
 	defer ticker.Stop()
 
+	logger.V(logging.DEBUG).Info("Starting maintenance routine", "interval", ps.config.EntryTTL/2)
+
 	for {
 		select {
 		case <-ctx.Done():
-			logger.Info("Maintenance routine stopping")
 			return
 		case <-ticker.C:
 			ps.cleanupExpired(ctx)
-			logger.Info("Completed maintenance cycle")
 		}
 	}
 }

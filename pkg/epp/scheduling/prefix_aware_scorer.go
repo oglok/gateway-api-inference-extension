@@ -19,6 +19,7 @@ package scheduling
 import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/gateway-api-inference-extension/pkg/epp/scheduling/types"
+	"sigs.k8s.io/gateway-api-inference-extension/pkg/epp/util/logging"
 )
 
 // PrefixAwareScorer is a routing scorer that scores pods based on the longest prefix match
@@ -44,7 +45,9 @@ func (s *PrefixAwareScorer) ScoreTargets(ctx *types.Context, pods []*types.PodMe
 
 	// Get the prompt from the request
 	prompt := ctx.Req.Prompt
+
 	if prompt == "" {
+		logger.V(logging.DEBUG).Info("Empty prompt, returning zero scores for all pods")
 		// If no prompt, return zero scores for all pods
 		for i, pod := range pods {
 			scoredPods[i] = PodScore{
@@ -58,6 +61,7 @@ func (s *PrefixAwareScorer) ScoreTargets(ctx *types.Context, pods []*types.PodMe
 	// Find the best matching pod for the prompt
 	matchedPod, found := s.prefixStore.FindPodForPrefix(ctx, prompt, ctx.Req.ResolvedTargetModel)
 	if !found {
+		logger.V(logging.DEBUG).Info("No matching prefix found, returning zero scores for all pods")
 		// If no matching prefix found, return zero scores for all pods
 		for i, pod := range pods {
 			scoredPods[i] = PodScore{
@@ -71,12 +75,18 @@ func (s *PrefixAwareScorer) ScoreTargets(ctx *types.Context, pods []*types.PodMe
 	// Assign scores based on pod match
 	for i, pod := range pods {
 		if pod.NamespacedName == matchedPod {
-			logger.Info("Pod found for prefix", "prompt", prompt, "pod", pod.NamespacedName.String())
+			logger.V(logging.DEBUG).Info("Pod matched for prefix",
+				"prompt", prompt,
+				"pod", pod.NamespacedName.String(),
+				"score", s.weight)
 			scoredPods[i] = PodScore{
 				Score: s.weight, // Use the configured weight for the matching pod
 				Pod:   pod,
 			}
 		} else {
+			logger.V(logging.DEBUG).Info("Pod did not match",
+			"pod", pod.NamespacedName.String(),
+			"score", 0)
 			scoredPods[i] = PodScore{
 				Score: 0, // Zero score for non-matching pods
 				Pod:   pod,

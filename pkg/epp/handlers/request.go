@@ -51,6 +51,10 @@ func (s *StreamingServer) HandleRequestBody(
 
 	modelName := model
 
+	// Extract prompt from request body
+	prompt, _ := requestBodyMap["prompt"].(string) // We don't require prompt to be present
+	reqCtx.Prompt = prompt
+
 	// NOTE: The nil checking for the modelObject means that we DO allow passthrough currently.
 	// This might be a security risk in the future where adapters not registered in the InferenceModel
 	// are able to be requested by using their distinct name.
@@ -67,6 +71,7 @@ func (s *StreamingServer) HandleRequestBody(
 
 	llmReq := &schedulingtypes.LLMRequest{
 		Model:               model,
+		Prompt:             prompt,
 		ResolvedTargetModel: modelName,
 		Critical:            modelObj.Spec.Criticality != nil && *modelObj.Spec.Criticality == v1alpha2.Critical,
 		SessionID:           reqCtx.SessionID,
