@@ -93,7 +93,47 @@ func (ps *PrefixStore) AddPrefix(ctx context.Context, prefix string, pod types.N
 }
 
 // FindPodForPrefix finds the best matching pod for a given prefix and model
-func (ps *PrefixStore) FindPodForPrefix(ctx context.Context, prefix string, modelName string) (types.NamespacedName, bool) {
+func (ps *PrefixStore) FindPodForPrefix(ctx context.Context, prefix string, modelName string) (types.NamespacedName, float64, bool) {
+	pod, score, found := ps.FindBestMatch(ctx, prefix, modelName)
+	if found && score > 0.2 { // Only consider matches with score > 20%
+		return pod, score, true
+	}
+	return types.NamespacedName{}, 0, false
+}
+
+// calculateMatchScore calculates the similarity score between two strings
+// Returns a value between 0 and 1, where 1 is a perfect match
+func calculateMatchScore(s1, s2 string) float64 {
+	// Convert to runes to handle Unicode properly
+	r1 := []rune(s1)
+	r2 := []rune(s2)
+
+	// Find the shorter length
+	minLen := len(r1)
+	if len(r2) < minLen {
+		minLen = len(r2)
+	}
+	if minLen == 0 {
+		return 0
+	}
+
+	// Count matching characters
+	matches := 0
+	for i := 0; i < minLen; i++ {
+		if r1[i] == r2[i] {
+			matches++
+		} else {
+			break // Stop at first mismatch
+		}
+	}
+
+	// Calculate score based on the length of the match
+	return float64(matches) / float64(len(r1))
+}
+
+// FindBestMatch finds the best matching pod for a given prefix and model
+// Returns the pod reference, match score (0-1), and whether a match was found
+func (ps *PrefixStore) FindBestMatch(ctx context.Context, prefix string, modelName string) (types.NamespacedName, float64, bool) {
 	ps.mu.RLock()
 	defer ps.mu.RUnlock()
 
@@ -101,7 +141,7 @@ func (ps *PrefixStore) FindPodForPrefix(ctx context.Context, prefix string, mode
 
 	if len(prefix) < ps.config.MinPrefixLen {
 		logger.V(logging.DEBUG).Info("Prefix too short", "prefix", prefix, "minLength", ps.config.MinPrefixLen)
-		return types.NamespacedName{}, false
+		return types.NamespacedName{}, 0, false
 	}
 
 	if len(prefix) > ps.config.MaxPrefixLen {
@@ -109,28 +149,42 @@ func (ps *PrefixStore) FindPodForPrefix(ctx context.Context, prefix string, mode
 		prefix = prefix[:ps.config.MaxPrefixLen]
 	}
 
-	// Use LongestPrefix to find the best match
-	matchedPrefix, val, found := ps.tree.LongestPrefix(prefix)
-	if !found {
-		logger.V(logging.DEBUG).Info("No matching prefix found", "prefix", prefix)
-		return types.NamespacedName{}, false
+	var bestPod types.NamespacedName
+	var bestScore float64
+	var found bool
+
+	// Walk through all prefixes in the tree
+	ps.tree.Walk(func(storedPrefix string, value interface{}) bool {
+		entry := value.(*PrefixEntry)
+
+		// Skip if model doesn't match or entry has expired
+		if entry.ModelName != modelName || time.Since(entry.LastUsed) > ps.config.EntryTTL {
+			return false
+		}
+
+		// Calculate match score
+		score := calculateMatchScore(prefix, storedPrefix)
+
+		// Update best match if this is better
+		if score > bestScore {
+			bestScore = score
+			bestPod = entry.PodRef
+			found = true
+		}
+
+		return false // Continue walking
+	})
+
+	if found {
+		logger.V(logging.DEBUG).Info("Found best matching pod",
+			"prefix", prefix,
+			"pod", bestPod.String(),
+			"score", bestScore)
+		return bestPod, bestScore, true
 	}
 
-	entry := val.(*PrefixEntry)
-
-	// Check if entry has expired or model doesn't match
-	if time.Since(entry.LastUsed) > ps.config.EntryTTL {
-		return types.NamespacedName{}, false
-	}
-	if entry.ModelName != modelName {
-		return types.NamespacedName{}, false
-	}
-
-	// Update LastUsed time for the matched entry
-	entry.LastUsed = time.Now()
-	ps.tree.Insert(matchedPrefix, entry)
-
-	return entry.PodRef, true
+	logger.V(logging.DEBUG).Info("No matching pod found", "prefix", prefix)
+	return types.NamespacedName{}, 0, false
 }
 
 // evictOldest removes the oldest entry from the store

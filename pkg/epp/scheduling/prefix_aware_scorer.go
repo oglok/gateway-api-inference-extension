@@ -59,7 +59,7 @@ func (s *PrefixAwareScorer) ScoreTargets(ctx *types.Context, pods []*types.PodMe
 	}
 
 	// Find the best matching pod for the prompt
-	matchedPod, found := s.prefixStore.FindPodForPrefix(ctx, prompt, ctx.Req.ResolvedTargetModel)
+	matchedPod, score, found := s.prefixStore.FindPodForPrefix(ctx, prompt, ctx.Req.ResolvedTargetModel)
 	if !found {
 		logger.V(logging.DEBUG).Info("No matching prefix found, returning zero scores for all pods")
 		// If no matching prefix found, return zero scores for all pods
@@ -72,23 +72,18 @@ func (s *PrefixAwareScorer) ScoreTargets(ctx *types.Context, pods []*types.PodMe
 		return scoredPods, nil
 	}
 
-	// Assign scores based on pod match
+	// Assign scores based on whether the pod matches the best matching pod
 	for i, pod := range pods {
 		if pod.NamespacedName == matchedPod {
-			logger.V(logging.DEBUG).Info("Pod matched for prefix",
-				"prompt", prompt,
-				"pod", pod.NamespacedName.String(),
-				"score", s.weight)
+			logger.V(logging.DEBUG).Info("Pod matched for prefix", "prompt", prompt, "pod", pod.String(), "score", score)
 			scoredPods[i] = PodScore{
-				Score: s.weight, // Use the configured weight for the matching pod
+				Score: score,
 				Pod:   pod,
 			}
 		} else {
-			logger.V(logging.DEBUG).Info("Pod did not match",
-			"pod", pod.NamespacedName.String(),
-			"score", 0)
+			logger.V(logging.DEBUG).Info("Pod did not match", "pod", pod.String(), "score", 0)
 			scoredPods[i] = PodScore{
-				Score: 0, // Zero score for non-matching pods
+				Score: 0,
 				Pod:   pod,
 			}
 		}
