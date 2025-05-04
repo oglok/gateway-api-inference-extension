@@ -30,10 +30,13 @@ import (
 const (
 	kvCacheScorerEnablementEnvVar   = "ENABLE_KVCACHE_AWARE_SCORER"
 	loadAwareScorerEnablementEnvVar = "ENABLE_LOAD_AWARE_SCORER"
-	pdFilterEnablementEnvVar        = "ENABLE_PD_FILTER"
+	prefixScorerEnablementEnvVar    = "ENABLE_PREFIX_AWARE_SCORER"
+
+	pdFilterEnablementEnvVar = "ENABLE_PD_FILTER"
 
 	kvCacheScorerWeightEnvVar   = "KVCACHE_AWARE_SCORER_WEIGHT"
 	loadAwareScorerWeightEnvVar = "LOAD_AWARE_SCORER_WEIGHT"
+	prefixScorerWeightEnvVar    = "PREFIX_AWARE_SCORER_WEIGHT"
 )
 
 func init() {
@@ -46,6 +49,7 @@ func setDefaultConfig() {
 	setLoadAwareScorer()
 	setKVCacheAwareScorer()
 	setPDFilter()
+	setPrefixScorer()
 
 	defaultConfig.picker = picker.NewMaxScorePicker()
 }
@@ -95,4 +99,21 @@ func setPDFilter() {
 
 	defaultConfig.filters = append(defaultConfig.filters, filter.PDFilter)
 	loggerDebug.Info("Initialized PDFilter")
+}
+
+func setPrefixScorer() {
+	ctx := context.Background()
+	loggerDebug := log.FromContext(ctx).WithName("scheduler_config").V(logutil.DEBUG)
+
+	if envutil.GetEnvString(prefixScorerEnablementEnvVar, "false", loggerDebug) != "true" {
+		loggerDebug.Info("Skipping PrefixScorer creation as it is not enabled")
+		return
+	}
+
+	prefixScorerWeight := envutil.GetEnvInt(prefixScorerWeightEnvVar, 1, loggerDebug)
+	prefixScorer := scorer.NewPrefixAwareScorer(nil)
+	defaultConfig.scorers[prefixScorer] = prefixScorerWeight // TODO: make configurable
+	defaultConfig.postResponsePlugins = append(defaultConfig.postResponsePlugins, prefixScorer)
+
+	loggerDebug.Info("Initialized PrefixAwareScorer", "weight", prefixScorerWeight)
 }
